@@ -1,0 +1,10 @@
+pandas>=2.0
+numpy
+requests
+xlrd>=2.0.1
+openpyxl
+yfinance
+gspread>=6
+jpholiday
+pytest
+tabulate
