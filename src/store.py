@@ -49,7 +49,14 @@ class LocalStore:
 class SheetsStore:
     def __init__(self, sheet_id: str, creds_json: str):
         import gspread
-        self.book = gspread.service_account_from_dict(json.loads(creds_json)).open_by_key(sheet_id)
+        try:
+            info = json.loads(creds_json)
+            assert isinstance(info, dict) and info.get("type") == "service_account"
+        except Exception:
+            raise SystemExit(
+                "GOOGLE_SERVICE_ACCOUNT_JSON がサービスアカウント鍵のJSON全文ではありません "
+                f"(文字数={len(creds_json)}, 先頭={creds_json[:1]!r})。鍵ファイルの全文を貼り直してください。")
+        self.book = gspread.service_account_from_dict(info).open_by_key(sheet_id)
 
     def _ws(self, table):
         try:
