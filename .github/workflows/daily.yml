@@ -9,10 +9,21 @@ on:
         description: "公表日 YYYY-MM-DD (空なら今日)"
         required: false
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: screener
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      has_site: ${{ steps.chk.outputs.has_site }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,3 +43,22 @@ jobs:
         with:
           name: report
           path: out/
+          if-no-files-found: ignore
+      - id: chk
+        run: |
+          if [ -f out/site/index.html ]; then echo "has_site=true" >> "$GITHUB_OUTPUT"; else echo "has_site=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.chk.outputs.has_site == 'true'
+        with:
+          path: out/site
+
+  deploy:
+    needs: run
+    if: needs.run.outputs.has_site == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.dep.outputs.page_url }}
+    steps:
+      - id: dep
+        uses: actions/deploy-pages@v4

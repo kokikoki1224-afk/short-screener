@@ -6,7 +6,7 @@ import sys
 import pandas as pd
 
 from . import config as C
-from . import jpx, prices, report, scoring
+from . import dashboard, jpx, prices, report, scoring
 from .calendar_jp import is_business_day
 from .store import get_store
 
@@ -68,6 +68,7 @@ def main(argv=None):
     md = report.to_markdown(today, rk, sc, hist)
     C.OUT_DIR.mkdir(exist_ok=True)
     (C.OUT_DIR / f"report_{today}.md").write_text(md, encoding="utf-8")
+    dashboard.build(today, sc, rk, hist, C.OUT_DIR / "site" / "index.html")
     sc.to_csv(C.OUT_DIR / f"scores_{today}.csv", index=False, encoding="utf-8-sig")
 
     # 8. 保存
