@@ -84,6 +84,9 @@ class SheetsStore:
         if len(vals) < 2:
             return pd.DataFrame()
         df = pd.DataFrame(vals[1:], columns=vals[0])
+        if not set(KEYS[table]) <= set(df.columns):  # 見出し欠損など。空扱いにして次の保存で作り直す
+            print(f"warn: シート {table} の形式が想定外のため空として扱います (列={list(df.columns)[:6]})")
+            return pd.DataFrame()
         return coerce_numeric(df)
 
     def upsert(self, table: str, df: pd.DataFrame):
