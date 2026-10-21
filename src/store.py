@@ -31,6 +31,21 @@ def merge(old: pd.DataFrame, new: pd.DataFrame, table: str) -> pd.DataFrame:
     return pd.concat([_norm(old, table), new], ignore_index=True).drop_duplicates(KEYS[table], keep="last")
 
 
+TEXT_COLS = {"code", "name", "holder", "main_holders", "type", "comment", "freq", "margin_freq",
+             "margin_note", "exclude_reason"}
+
+
+def coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """Sheetsは全て文字列で返るので、数値に変換できる列だけ変換する(pandas 3対応)。"""
+    for c in df.columns:
+        if c in TEXT_COLS or "date" in c:
+            continue
+        conv = pd.to_numeric(df[c].replace("", pd.NA), errors="coerce")
+        if conv.notna().sum() == df[c].replace("", pd.NA).notna().sum():  # 全ての非空値が数値のとき
+            df[c] = conv
+    return df
+
+
 class LocalStore:
     def __init__(self, root=DATA_DIR):
         self.root = root
@@ -69,10 +84,7 @@ class SheetsStore:
         if len(vals) < 2:
             return pd.DataFrame()
         df = pd.DataFrame(vals[1:], columns=vals[0])
-        for c in df.columns:
-            if c != "code" and "date" not in c and c not in ("name", "holder", "main_holders", "type", "comment"):
-                df[c] = pd.to_numeric(df[c], errors="ignore")
-        return df
+        return coerce_numeric(df)
 
     def upsert(self, table: str, df: pd.DataFrame):
         if df.empty:
