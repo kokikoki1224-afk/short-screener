@@ -26,11 +26,16 @@ def list_short_reports() -> dict[dt.date, str]:
     return out
 
 
-def fetch_short_positions(disclosed: dt.date) -> pd.DataFrame:
-    """公表日 disclosed のレポートを取得。ratioは%、prev_ratioは直近報告時の%。"""
+def fetch_short_positions(disclosed: dt.date, fallback: bool = False) -> pd.DataFrame:
+    """公表日 disclosed のレポートを取得。ratioは%、prev_ratioは直近報告時の%。
+    fallback=True なら、未公表のとき disclosed 以前で最新の公表分を使う。"""
     urls = list_short_reports()
     if disclosed not in urls:
-        raise LookupError(f"JPX空売りレポート未公表: {disclosed} (公開中: {sorted(urls)})")
+        earlier = [d for d in urls if d <= disclosed]
+        if not (fallback and earlier):
+            raise LookupError(f"JPX空売りレポート未公表: {disclosed} (公開中: {sorted(urls)[-3:]})")
+        print(f"{disclosed} 分は未公表。最新の公表分 {max(earlier)} を使います。")
+        disclosed = max(earlier)
     return parse_short_positions(_get(urls[disclosed]), disclosed)
 
 

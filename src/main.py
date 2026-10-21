@@ -47,7 +47,8 @@ def main(argv=None):
         return 0
     store = get_store()
 
-    shorts = jpx.fetch_short_positions(today)                        # 2. JPX空売り
+    shorts = jpx.fetch_short_positions(today, fallback=not a.date)                        # 2. JPX空売り
+    today = shorts["disclosed"].iloc[0]  # 以降の保存・出力は実際に使った公表日で揃える
     print(f"short: {len(shorts)} rows / {shorts['code'].nunique()} stocks")
     codes = sorted(shorts["code"].unique())
     px = prices.fetch_prices(codes)                                  # 3. 株価・出来高
