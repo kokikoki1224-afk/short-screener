@@ -49,20 +49,27 @@ tr.cm td{white-space:pre-line;text-align:left;background:rgba(120,140,190,.06);c
 </style></head><body>
 <header><h1>機関空売り・需給スクリーナー</h1><div class="sub" id="sub"></div>
 <nav id="nav"></nav><input id="q" placeholder="銘柄コード・名前で検索"></header>
-<main><p class="note" id="note"></p><div class="wrap"><table id="t"></table></div></main>
+<main><p class="note" id="note"></p><div class="wrap"><table id="t"></table></div><p class="note" id="miss"></p></main>
 <script>
 const D=__DATA__;
 const byCode=Object.fromEntries(D.rows.map(r=>[r.code,r]));
+let W=new Set();
+try{W=new Set(JSON.parse(localStorage.getItem("watch")||"[]"))}catch(e){}
+function saveW(){try{localStorage.setItem("watch",JSON.stringify([...W]))}catch(e){}}
+function tw(c){W.has(c)?W.delete(c):W.add(c);saveW();sync();render()}
 const tabs=[
  ["sell","売り継続",D.ids.sell.map(c=>byCode[c]),"空売り増加×下落トレンド×出来高×信用。点数順。"],
  ["buyback","買い戻し",D.ids.buyback.map(c=>byCode[c]),"空売り残高が減少した銘柄(減少率順)。「転換」は株価上昇+出来高増も伴うもの。"],
  ["squeeze","踏み上げ候補",D.ids.squeeze.map(c=>byCode[c]),"空売り高水準×株価上昇×出来高急増×5日線・20日線の上。"],
+ ["watch","気になる",[],"★を付けた銘柄。登録はこの端末のブラウザ内にだけ保存されます(他の端末とは共有されません)。"],
  ["all","全銘柄",D.rows,"除外・警告の銘柄も含む。列見出しで並べ替え。"]];
+const tabRows=t=>t[0]==="watch"?[...W].map(c=>byCode[c]).filter(Boolean):t[2];
 let cur="sell",sortKey=null,sortDir=-1;
 const f=(v,d=2)=>v==null||isNaN(v)?"-":Number(v).toFixed(d);
 const pc=(v,d=1)=>v==null?"-":(v*100).toFixed(d)+"%";
 const sg=v=>v==null?"":(v>0?"up":v<0?"dn":"");
 const cols=[
+ ["star","★",r=>`<span onclick="event.stopPropagation();tw('${r.code}')" style="cursor:pointer;font-size:17px;color:${W.has(r.code)?"#e8a700":"var(--mut)"}">${W.has(r.code)?"★":"☆"}</span>`,"l"],
  ["code","コード",r=>r.code,"l"],["name","銘柄名",r=>r.name,"l"],["score","総合点",r=>r.score],
  ["short_pct","空売り合計%",r=>f(r.short_pct)],
  ["short_delta_pp","増減pp",r=>`<span class="${sg(r.short_delta_pp)}">${r.short_delta_pp>0?"+":""}${f(r.short_delta_pp)}</span>`],
@@ -77,20 +84,23 @@ const cols=[
    r.type_squeeze&&'<span class="tag hot">踏み上げ</span>',
    r.exclude_reason&&`<span class="tag">${r.exclude_reason}</span>`].filter(Boolean).join(""),"l"]];
 function render(){
- const t=tabs.find(x=>x[0]===cur);let rows=t[2].slice();
+ const t=tabs.find(x=>x[0]===cur);let rows=tabRows(t).slice();
  const q=document.getElementById("q").value.trim();
  if(q)rows=D.rows.filter(r=>(r.code+r.name).includes(q));
  if(sortKey)rows.sort((a,b)=>((a[sortKey]??-1e18)-(b[sortKey]??-1e18))*sortDir||0);
  document.getElementById("note").textContent=(q?`検索結果 ${rows.length}件`:t[3]);
  let h="<tr><th>#</th>"+cols.map(c=>`<th class="${c[3]||""}" onclick="srt('${c[0]}')">${c[1]}</th>`).join("")+"</tr>";
  rows.forEach((r,i)=>{h+=`<tr class="row" onclick="tg(${i})"><td>${i+1}</td>`+cols.map(c=>`<td class="${c[3]||""}">${c[2](r)}</td>`).join("")+`</tr><tr class="cm" id="c${i}" hidden><td colspan="${cols.length+1}">${r.comment}</td></tr>`});
- document.getElementById("t").innerHTML=rows.length?h:"<tr><td class='l'>該当なし</td></tr>";
+ const empty=cur==="watch"&&!q?"各行の☆を押すと登録できます。":"該当なし";
+ document.getElementById("t").innerHTML=rows.length?h:`<tr><td class='l'>${empty}</td></tr>`;
+ const miss=cur==="watch"&&!q?[...W].filter(c=>!byCode[c]):[];
+ document.getElementById("miss").innerHTML=miss.length?"本日は空売り報告なし: "+miss.map(c=>`${c} <a href="#" onclick="tw('${c}');return false">×</a>`).join(" / "):"";
 }
 function tg(i){const e=document.getElementById("c"+i);e.hidden=!e.hidden}
 function srt(k){if(!(k in D.rows[0]))return;sortDir=sortKey===k?-sortDir:-1;sortKey=k;render()}
 document.getElementById("sub").textContent="データ日: "+D.date+" / 行をタップでコメント表示";
-document.getElementById("nav").innerHTML=tabs.map(t=>`<button id="b_${t[0]}" onclick="cur='${t[0]}';sortKey=null;sync();render()">${t[1]} (${t[2].length})</button>`).join("");
-function sync(){tabs.forEach(t=>document.getElementById("b_"+t[0]).classList.toggle("on",t[0]===cur))}
+document.getElementById("nav").innerHTML=tabs.map(t=>`<button id="b_${t[0]}" onclick="cur='${t[0]}';sortKey=null;sync();render()"></button>`).join("");
+function sync(){tabs.forEach(t=>{const b=document.getElementById("b_"+t[0]);b.classList.toggle("on",t[0]===cur);b.textContent=`${t[0]==="watch"?"★ ":""}${t[1]} (${tabRows(t).length})`})}
 document.getElementById("q").oninput=render;sync();render();
 </script></body></html>
 """
