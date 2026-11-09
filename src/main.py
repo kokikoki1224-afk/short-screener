@@ -6,7 +6,8 @@ import sys
 import pandas as pd
 
 from . import config as C
-from . import dashboard, jpx, prices, report, scoring
+from . import backfill, dashboard, jpx, prices, report, scoring
+from . import positions as P
 from .calendar_jp import is_business_day
 from .store import get_store
 
@@ -50,7 +51,13 @@ def main(argv=None):
     shorts = jpx.fetch_short_positions(today, fallback=not a.date)                        # 2. JPX空売り
     today = shorts["disclosed"].iloc[0]  # 以降の保存・出力は実際に使った公表日で揃える
     print(f"short: {len(shorts)} rows / {shorts['code'].nunique()} stocks")
-    codes = sorted(shorts["code"].unique())
+    positions = store.read("positions")                              # 機関別の最新ポジション(合計の元)
+    if positions.empty:
+        print("positions が未作成。過去ファイルから作成します(初回のみ・数分)")
+        positions = backfill.run(store)
+    pos_now = P.apply_reports(positions, shorts)                     # 当日の報告を反映(再実行しても同じ結果)
+    tot = P.totals(pos_now)
+    codes = sorted(set(tot.index) | set(shorts["code"]))             # 合計>0の全銘柄(当日未報告の銘柄も含む)
     px = prices.fetch_prices(codes)                                  # 3. 株価・出来高
     print(f"prices: {px['code'].nunique()} stocks")
     margin = pd.concat([jpx.fetch_weekly_margin(), jpx.fetch_daily_margin()])  # 4. 信用残
@@ -58,18 +65,14 @@ def main(argv=None):
     margin = margin.sort_values("date").groupby("code").tail(1)      # 日次があれば日次を優先
     margin = carry_forward_margin(store, margin[margin["code"].isin(codes)], today)
 
-    hist = store.read("institutional_short")                         # 5. 前回比較(履歴)
-    sc = scoring.build_scores(shorts, px, margin, load_exclusions())  # 6. スコア
-    cur = shorts[["calc_date", "code", "holder", "ratio"]].assign(calc_date=lambda d: d["calc_date"].astype(str))
-    full_hist = pd.concat([hist[cur.columns] if not hist.empty else hist, cur]).drop_duplicates(
-        ["calc_date", "code", "holder"], keep="last")
-    sc = scoring.add_history_changes(sc, full_hist)
+    sc = scoring.build_scores(shorts, px, margin, load_exclusions(), positions=positions)  # 6. スコア
+    sc = scoring.add_history_changes(sc, store.read("short_total_history"), today)      # 5. 1/3/5/20/60日比
     rk = report.rankings(sc)                                         # 7. ランキング
 
-    md = report.to_markdown(today, rk, sc, hist)
+    md = report.to_markdown(today, rk, sc)
     C.OUT_DIR.mkdir(exist_ok=True)
     (C.OUT_DIR / f"report_{today}.md").write_text(md, encoding="utf-8")
-    dashboard.build(today, sc, rk, hist, C.OUT_DIR / "site" / "index.html")
+    dashboard.build(today, sc, rk, C.OUT_DIR / "site" / "index.html")
     sc.to_csv(C.OUT_DIR / f"scores_{today}.csv", index=False, encoding="utf-8-sig")
 
     # 8. 保存
@@ -77,6 +80,9 @@ def main(argv=None):
         name=("name", "first"), shares_out=("shares_out", "median")).reset_index())
     store.upsert("institutional_short", shorts[
         ["calc_date", "code", "holder", "ratio", "shares", "prev_date", "prev_ratio", "delta_pp", "disclosed"]])
+    store.upsert("positions", pos_now)
+    store.upsert("short_total_history", pd.DataFrame({
+        "date": str(today), "code": tot.index, "short_pct": tot["short_pct"].values}))
     store.upsert("margin", margin)
     keep = px[px["date"] >= px["date"].max() - dt.timedelta(days=C.PRICE_RETENTION_DAYS)]
     store.upsert("daily_price", keep.drop(columns=["split", "turnover"]))
@@ -87,7 +93,7 @@ def main(argv=None):
                      ("売り継続型", r.type_sell_continue), ("踏み上げ候補", r.type_squeeze)):
             if f and not r.exclude_reason:
                 alerts.append({"date": str(today), "code": r.code, "type": t, "name": r.name,
-                               "comment": report.comment(r, hist)})
+                               "comment": report.comment(r)})
         if r.exclude_reason:
             alerts.append({"date": str(today), "code": r.code, "type": "除外/警告", "name": r.name,
                            "comment": r.exclude_reason})

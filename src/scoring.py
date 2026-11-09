@@ -3,25 +3,32 @@ import numpy as np
 import pandas as pd
 
 from . import config as C
+from . import positions as P
 
 
-def short_features(today: pd.DataFrame) -> pd.DataFrame:
-    """今日の報告(機関単位)→銘柄単位。ratio合計/前回合計/増減/増加機関数など。"""
-    g = today.groupby("code")
-    f = pd.DataFrame({
-        "name": g["name"].first(),
-        "short_pct": g["ratio"].sum(),
-        "short_prev_pct": g["prev_ratio"].sum(),
-        "n_inst": g.size(),
-        "n_up": g["delta_pp"].apply(lambda s: int((s > 0).sum())),
-        "n_down": g["delta_pp"].apply(lambda s: int((s < 0).sum())),
-    })
+def short_features(today: pd.DataFrame, pos: pd.DataFrame) -> pd.DataFrame:
+    """機関ごとの最新ポジション(pos, 当日報告を反映済み)から、銘柄ごとの合計と当日の増減を作る。
+
+    当日のファイルには報告した機関しか載らないため、合計は pos(全機関の最新値)で求める。
+    """
+    after = P.totals(pos)
+    before = P.totals(P.before_state(pos, today))
+    codes = after.index.union(before.index)
+    f = pd.DataFrame(index=codes)
+    f["short_pct"] = after["short_pct"].reindex(codes).fillna(0.0)
+    f["short_prev_pct"] = before["short_pct"].reindex(codes).fillna(0.0)
+    f["n_inst"] = after["n_inst"].reindex(codes).fillna(0).astype(int)
+    f["main_holders"] = after["main_holders"].reindex(codes).fillna("")
+    f["name"] = pos.groupby("code")["name"].first().reindex(codes)
+
+    t = today.sort_values("calc_date", kind="stable")
+    ch = pd.DataFrame({"start": t.groupby(["code", "holder"])["prev_ratio"].first().fillna(0.0),
+                       "end": t.groupby(["code", "holder"])["ratio"].last()})
+    f["n_up"] = (ch["end"] > ch["start"]).groupby("code").sum().reindex(codes).fillna(0).astype(int)
+    f["n_down"] = (ch["end"] < ch["start"]).groupby("code").sum().reindex(codes).fillna(0).astype(int)
     f["short_delta_pp"] = f["short_pct"] - f["short_prev_pct"]
     f["short_delta_rate"] = np.where(f["short_prev_pct"] > 0, f["short_delta_pp"] / f["short_prev_pct"], np.nan)
-    top = (today.assign(_a=today["delta_pp"].abs()).sort_values("_a", ascending=False)
-           .groupby("code").head(3).groupby("code")["holder"].apply(" / ".join))
-    f["main_holders"] = top
-    return f.reset_index()
+    return f.rename_axis("code").reset_index()
 
 
 def price_features(px: pd.DataFrame) -> pd.DataFrame:
@@ -101,9 +108,12 @@ def exclusion_reason(r, excl: dict) -> str:
     return ""
 
 
-def build_scores(shorts: pd.DataFrame, px: pd.DataFrame, margin: pd.DataFrame, excl: dict | None = None) -> pd.DataFrame:
+def build_scores(shorts: pd.DataFrame, px: pd.DataFrame, margin: pd.DataFrame, excl: dict | None = None,
+                 positions: pd.DataFrame | None = None) -> pd.DataFrame:
+    """shorts=当日の報告(機関単位), positions=保存済みの機関別最新ポジション(当日分を反映して合計する)。"""
     excl = excl or {}
-    df = short_features(shorts).merge(price_features(px), on="code", how="inner")
+    pos = P.apply_reports(positions, shorts)
+    df = short_features(shorts, pos).merge(price_features(px), on="code", how="inner")
     m = margin[["code", "buy", "buy_chg", "sell", "freq", "updated"]].rename(
         columns={"buy": "margin_buy", "buy_chg": "margin_buy_chg", "sell": "margin_sell",
                  "freq": "margin_freq", "updated": "margin_updated"})
@@ -141,16 +151,18 @@ def build_scores(shorts: pd.DataFrame, px: pd.DataFrame, margin: pd.DataFrame, e
     return pd.DataFrame(out).merge(df[keep], on="code")
 
 
-def add_history_changes(scores: pd.DataFrame, short_hist: pd.DataFrame) -> pd.DataFrame:
-    """保存済み履歴から 1/3/5/20/60 回前の報告比の合計空売り残高変化(pp)を付与。"""
+def add_history_changes(scores: pd.DataFrame, total_hist: pd.DataFrame, date) -> pd.DataFrame:
+    """日別の機関空売り合計(short_total_history + 当日分)から、1/3/5/20/60営業日前比(pp)を付与。"""
     scores = scores.copy()
     for n in C.LOOKBACKS:
         scores[f"short_chg_{n}d"] = np.nan
-    if short_hist is None or short_hist.empty:
-        return scores
-    h = short_hist.copy()
-    h["code"] = h["code"].astype(str)
-    tot = h.groupby(["calc_date", "code"])["ratio"].sum().unstack("code").sort_index().ffill()
+    parts = [scores[["code", "short_pct"]].assign(date=str(date))]
+    if total_hist is not None and not total_hist.empty:
+        h = total_hist[["date", "code", "short_pct"]].copy()
+        h["code"], h["date"] = h["code"].astype(str), h["date"].astype(str).str.slice(0, 10)
+        parts.insert(0, h[h["date"] != str(date)])
+    tot = (pd.concat(parts).drop_duplicates(["date", "code"], keep="last")
+           .pivot(index="date", columns="code", values="short_pct").sort_index().fillna(0.0))
     for n in C.LOOKBACKS:
         if len(tot) > n:
             scores[f"short_chg_{n}d"] = scores["code"].map(tot.iloc[-1] - tot.iloc[-1 - n])

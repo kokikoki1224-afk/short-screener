@@ -6,10 +6,12 @@ import pandas as pd
 
 from .config import DATA_DIR
 
-TABLES = ["stocks", "institutional_short", "margin", "daily_price", "scores", "alerts"]
+TABLES = ["stocks", "institutional_short", "positions", "short_total_history", "margin", "daily_price", "scores", "alerts"]
 KEYS = {
     "stocks": ["code"],
     "institutional_short": ["calc_date", "code", "holder"],
+    "positions": ["code", "holder"],
+    "short_total_history": ["date", "code"],
     "margin": ["date", "code"],
     "daily_price": ["date", "code"],
     "scores": ["date", "code"],

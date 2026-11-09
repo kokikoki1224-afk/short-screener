@@ -18,11 +18,25 @@ def _get(url: str) -> bytes:
     return r.content
 
 
-def list_short_reports() -> dict[dt.date, str]:
-    html = _get(SHORT_INDEX).decode("utf-8", "ignore")
+def list_short_reports(include_archives: bool = False) -> dict[dt.date, str]:
+    """公表日→xlsのURL。include_archives=True なら月次アーカイブ(約1年分)も含める。"""
+    pages = [SHORT_INDEX]
     out = {}
-    for path, ymd in re.findall(r'href="([^"]*?(\d{8})_Short_Positions\.xls)"', html):
-        out[dt.datetime.strptime(ymd, "%Y%m%d").date()] = JPX_BASE + path
+    i = 1
+    while True:
+        if pages:
+            url = pages.pop(0)
+        elif include_archives:
+            url = f"{JPX_BASE}/markets/public/short-selling/00-archives-{i:02d}.html"
+            i += 1
+        else:
+            break
+        r = requests.get(url, headers=UA, timeout=60)
+        if r.status_code == 404:
+            break
+        r.raise_for_status()
+        for path, ymd in re.findall(r'href="([^"]*?(\d{8})_Short_Positions\.xls)"', r.text):
+            out[dt.datetime.strptime(ymd, "%Y%m%d").date()] = JPX_BASE + path
     return out
 
 
@@ -39,6 +53,15 @@ def fetch_short_positions(disclosed: dt.date, fallback: bool = False) -> pd.Data
     return parse_short_positions(_get(urls[disclosed]), disclosed)
 
 
+def _holder_key(raw: pd.DataFrame) -> pd.Series:
+    """機関名 + (投資一任の)委託者 + 信託財産。同じ機関名でも口座が違えば別ポジションとして区別する。"""
+    def col(i):
+        return raw.iloc[:, i].where(raw.iloc[:, i].notna(), "").astype(str).str.strip()
+    key = col(4)
+    key = key + col(6).map(lambda x: f" [委託者:{x}]" if x else "")
+    return key + col(8).map(lambda x: f" [{x}]" if x else "")
+
+
 def parse_short_positions(content: bytes, disclosed: dt.date) -> pd.DataFrame:
     raw = pd.read_excel(io.BytesIO(content), header=None).dropna(how="all", axis=1)
     raw = raw.iloc[8:]  # 0-5: タイトル, 6-7: 日英ヘッダ
@@ -46,7 +69,7 @@ def parse_short_positions(content: bytes, disclosed: dt.date) -> pd.DataFrame:
         "calc_date": pd.to_datetime(raw.iloc[:, 0], errors="coerce"),
         "code": raw.iloc[:, 1].astype(str).str.strip(),
         "name": raw.iloc[:, 2].astype(str).str.replace("　", " ").str.replace(" 普通株式", "").str.strip(),
-        "holder": raw.iloc[:, 4].astype(str).str.strip(),
+        "holder": _holder_key(raw),
         "ratio": pd.to_numeric(raw.iloc[:, 9], errors="coerce") * 100,
         "shares": pd.to_numeric(raw.iloc[:, 10], errors="coerce"),
         "prev_date": pd.to_datetime(raw.iloc[:, 12], errors="coerce"),

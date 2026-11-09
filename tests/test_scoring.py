@@ -18,7 +18,7 @@ def _px(code, closes, vols, lows=None):
 
 def _short(code, rows):
     return pd.DataFrame([{"code": code, "name": "テスト", "holder": h, "ratio": r, "prev_ratio": p,
-                          "delta_pp": r - p, "shares_out": 1e7} for h, r, p in rows])
+                          "calc_date": "2026-03-20", "delta_pp": r - p, "shares_out": 1e7} for h, r, p in rows])
 
 
 def _margin(code, buy, chg):

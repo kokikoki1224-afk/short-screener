@@ -20,32 +20,16 @@ def rankings(sc: pd.DataFrame) -> dict[str, pd.DataFrame]:
             "squeeze": squeeze.reset_index(drop=True)}
 
 
-def _holder_streak(hist: pd.DataFrame, code: str, holder: str) -> int:
-    """直近の連続増加回数(保存履歴ベース)。"""
-    if hist is None or hist.empty:
-        return 0
-    h = hist[(hist["code"].astype(str) == code) & (hist["holder"] == holder)].sort_values("calc_date")
-    d = h["ratio"].astype(float).diff().dropna().tolist()
-    n = 0
-    for x in reversed(d):
-        if x > 0:
-            n += 1
-        else:
-            break
-    return n
-
-
-def comment(r, hist: pd.DataFrame | None = None) -> str:
+def comment(r) -> str:
     lines = []
-    holder = (r.main_holders or "").split(" / ")[0]
-    streak = _holder_streak(hist, r.code, holder) if holder else 0
     if r.short_delta_pp > 0:
-        s = f"{holder or '機関'}など{r.n_up}機関が空売りを増加(合計{r.short_pct:.2f}%、{r.short_delta_pp:+.2f}pp)"
-        if streak >= 2:
-            s = f"{holder}が{streak}回連続で空売りを増加。" + s
-        lines.append(s + "。")
+        lines.append(f"機関空売り合計は{r.short_pct:.2f}%({r.short_delta_pp:+.2f}pp)。今回{r.n_up}機関が売り増し。"
+                     f"主な保有: {r.main_holders}。")
     elif r.short_delta_pp < 0:
-        lines.append(f"機関空売り残高が減少(合計{r.short_pct:.2f}%、{r.short_delta_pp:+.2f}pp)。買い戻しの可能性。")
+        lines.append(f"機関空売り合計が減少({r.short_pct:.2f}%、{r.short_delta_pp:+.2f}pp)。買い戻しの可能性。"
+                     f"主な保有: {r.main_holders or 'なし'}。")
+    else:
+        lines.append(f"機関空売り合計は{r.short_pct:.2f}%(変化なし)。主な保有: {r.main_holders}。")
     pos = "下回り" if r.close < r.ma20 else "上回り"
     lines.append(f"株価は20日線を{pos}、5日線は{'20日線の下' if r.ma5 < r.ma20 else '20日線の上'}。"
                  f"当日出来高は20日平均の{r.vol_ratio:.1f}倍(前日比{r.day_chg:+.1%})。")
@@ -58,7 +42,7 @@ def comment(r, hist: pd.DataFrame | None = None) -> str:
     return "\n".join(lines)
 
 
-def to_markdown(date, rk: dict[str, pd.DataFrame], sc: pd.DataFrame, hist=None) -> str:
+def to_markdown(date, rk: dict[str, pd.DataFrame], sc: pd.DataFrame) -> str:
     def tbl(df, cols, names):
         if df.empty:
             return "(該当なし)\n"
@@ -81,7 +65,7 @@ def to_markdown(date, rk: dict[str, pd.DataFrame], sc: pd.DataFrame, hist=None) 
     md.append("## 4. 個別コメント\n")
     for key, label in (("sell", "売り継続"), ("buyback", "買い戻し"), ("squeeze", "踏み上げ")):
         for r in rk[key].head(5).itertuples():
-            md.append(f"**[{label}] {r.code} {r.name}**\n\n" + comment(r, hist).replace("\n", "  \n") + "\n")
+            md.append(f"**[{label}] {r.code} {r.name}**\n\n" + comment(r).replace("\n", "  \n") + "\n")
     warn = sc[sc["exclude_reason"] != ""]
     if len(warn):
         md.append(f"## 除外・警告 ({len(warn)}銘柄)\n")

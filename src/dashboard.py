@@ -6,14 +6,14 @@ import pandas as pd
 from .report import comment
 
 COLS = ["code", "name", "score", "s_short", "s_trend", "s_volume", "s_margin", "short_pct", "short_delta_pp",
-        "short_delta_rate", "n_up", "close", "ma5", "ma20", "day_chg", "vol_ratio", "buy_chg_pct",
+        "short_delta_rate", "n_inst", "n_up", "close", "ma5", "ma20", "day_chg", "vol_ratio", "buy_chg_pct",
         "main_holders", "flag_buyback_start", "flag_buyback_turn", "type_sell_continue", "type_buyback",
         "type_squeeze", "exclude_reason", "comment"]
 
 
-def build(date, sc: pd.DataFrame, rk: dict, hist, path):
+def build(date, sc: pd.DataFrame, rk: dict, path):
     d = sc.copy()
-    d["comment"] = [comment(r, hist) for r in d.itertuples()]
+    d["comment"] = [comment(r) for r in d.itertuples()]
     ids = {k: v["code"].tolist() for k, v in rk.items()}
     payload = {"date": str(date), "ids": ids,
                "rows": json.loads(d[COLS].to_json(orient="records", force_ascii=False))}
@@ -71,7 +71,7 @@ const sg=v=>v==null?"":(v>0?"up":v<0?"dn":"");
 const cols=[
  ["star","★",r=>`<span onclick="event.stopPropagation();tw('${r.code}')" style="cursor:pointer;font-size:17px;color:${W.has(r.code)?"#e8a700":"var(--mut)"}">${W.has(r.code)?"★":"☆"}</span>`,"l"],
  ["code","コード",r=>r.code,"l"],["name","銘柄名",r=>r.name,"l"],["score","総合点",r=>r.score],
- ["short_pct","空売り合計%",r=>f(r.short_pct)],
+ ["short_pct","空売り合計%",r=>f(r.short_pct)],["n_inst","機関数",r=>r.n_inst],
  ["short_delta_pp","増減pp",r=>`<span class="${sg(r.short_delta_pp)}">${r.short_delta_pp>0?"+":""}${f(r.short_delta_pp)}</span>`],
  ["close","株価",r=>f(r.close,0)],["ma5","5日線",r=>f(r.ma5,0)],["ma20","20日線",r=>f(r.ma20,0)],
  ["day_chg","前日比",r=>`<span class="${sg(r.day_chg)}">${pc(r.day_chg)}</span>`],

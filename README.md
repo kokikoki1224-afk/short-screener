@@ -18,6 +18,13 @@ pytest
 
 信用残が無い銘柄は ④=0点・「信用データなし」と表示。更新のない銘柄は前回値を複製し `updated=False`。
 
+## 機関空売りの「合計」の考え方
+JPXの日次ファイルには**その日に報告した機関しか載らない**。合計は機関ごとの最新ポジション(シート `positions`)を足して求める。
+- 0.5%未満に下がった機関は開示対象外なので合計に入れない。
+- `positions` が空のときは、初回の実行で JPX の過去ファイル(約1年分)から自動作成される(数分)。作り直しは Actions の `rebuild` を true にして実行。
+- 機関名の表記ゆれ(社名変更など)は別機関として数える。1年より前から動いていない大口は拾えない。
+- 日別の合計は `short_total_history`。1/3/5/20/60日変化(`short_chg_Nd`)はここから計算する。
+
 ## 保存 (Google Sheets)
 シート `stocks / institutional_short / margin / daily_price / scores / alerts` を自動作成。
 Secrets: `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`(サービスアカウントにシートの編集権限を付与), 任意で `NOTIFY_WEBHOOK_URL`(Slack/Discord)。
