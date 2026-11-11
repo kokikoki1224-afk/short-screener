@@ -25,6 +25,12 @@ JPXの日次ファイルには**その日に報告した機関しか載らない
 - 機関名の表記ゆれ(社名変更など)は別機関として数える。1年より前から動いていない大口は拾えない。
 - 日別の合計は `short_total_history`。1/3/5/20/60日変化(`short_chg_Nd`)はここから計算する。
 
+## シートの容量(肥大化対策)
+Googleスプレッドシートは1ブック1,000万セルまで。日付つきのシートは**追記+古い行の自動削除**で、毎回の全件書き戻しもしない。
+残す日数は `src/config.py` の `RETENTION_DAYS`: scores 20 / alerts 30 / institutional_short 10 / margin 10 / daily_price 10(最新日のみ追記) /
+short_total_history 70(1/3/5/20/60日比の計算に必要)。**これより古い行はシートから消える**(長期保存が必要なら別途退避が要る)。
+定常状態で約50〜100万セル。`positions` / `stocks` は日付なしの現在値で、毎回全件を上書きする。
+
 ## 保存 (Google Sheets)
 シート `stocks / institutional_short / margin / daily_price / scores / alerts` を自動作成。
 Secrets: `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`(サービスアカウントにシートの編集権限を付与), 任意で `NOTIFY_WEBHOOK_URL`(Slack/Discord)。

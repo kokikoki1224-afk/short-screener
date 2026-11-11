@@ -32,4 +32,14 @@ BUYBACK_VOL = 1.2             # 買い戻し転換の出来高増加
 
 TOP_N = 20
 LOOKBACKS = (1, 3, 5, 20, 60)
-PRICE_RETENTION_DAYS = 120    # daily_price に保存する日数
+
+# Googleスプレッドシート(1ブック1,000万セルまで)に残す日数(異なる日付の数)。超えた古い行は自動削除。
+# short_total_history だけは 1/3/5/20/60日比の計算に使うので長め。株価は毎回取り直し、信用残は最新値しか使わない。
+RETENTION_DAYS = {"scores": 20, "alerts": 30, "institutional_short": 10, "margin": 10,
+                  "daily_price": 10, "short_total_history": 70}
+SCORE_SHEET_COLS = [
+    "date", "code", "name", "score", "s_short", "s_trend", "s_volume", "s_margin",
+    "short_pct", "short_delta_pp", "n_inst", "n_up", "main_holders", "close", "ma5", "ma20", "day_chg",
+    "vol_ratio", "buy_chg_pct", "margin_ratio", "flag_buyback_start", "flag_buyback_turn",
+    "type_sell_continue", "type_buyback", "type_squeeze", "exclude_reason",
+    "short_chg_1d", "short_chg_3d", "short_chg_5d", "short_chg_20d", "short_chg_60d"]

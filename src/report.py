@@ -34,7 +34,7 @@ def comment(r) -> str:
     lines.append(f"株価は20日線を{pos}、5日線は{'20日線の下' if r.ma5 < r.ma20 else '20日線の上'}。"
                  f"当日出来高は20日平均の{r.vol_ratio:.1f}倍(前日比{r.day_chg:+.1%})。")
     if not pd.isna(r.buy_chg_pct):
-        upd = "" if r.margin_updated in (True, "True", 1) else "(更新なし・前回値)"
+        upd = "" if str(r.margin_updated).lower() in ("true", "1") else "(更新なし・前回値)"
         lines.append(f"信用買い残は前回比{r.buy_chg_pct:+.1%}{upd}。{r.margin_note}")
     kind = ("機関売り+信用買い増加型" if r.type_sell_continue else "買い戻し転換" if r.flag_buyback_turn
             else "買い戻し型" if r.type_buyback else "踏み上げ候補" if r.type_squeeze else "監視")

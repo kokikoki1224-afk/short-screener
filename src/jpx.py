@@ -1,5 +1,6 @@
 """JPX 空売り残高報告 (Short_Positions.xls) と 日々公表信用残 (mtdaily.xlsx)。"""
 import io
+import time
 import re
 import datetime as dt
 
@@ -12,10 +13,17 @@ SHORT_INDEX = JPX_BASE + "/markets/public/short-selling/index.html"
 MARGIN_INDEX = JPX_BASE + "/markets/statistics-equities/margin/index.html"
 
 
-def _get(url: str) -> bytes:
-    r = requests.get(url, headers=UA, timeout=60)
-    r.raise_for_status()
-    return r.content
+def _get(url: str, tries: int = 4) -> bytes:
+    """JPXは接続が切れることがあるので、数回やり直す。"""
+    for i in range(tries):
+        try:
+            r = requests.get(url, headers=UA, timeout=60)
+            r.raise_for_status()
+            return r.content
+        except (requests.ConnectionError, requests.Timeout):
+            if i == tries - 1:
+                raise
+            time.sleep(3 * (i + 1))
 
 
 def list_short_reports(include_archives: bool = False) -> dict[dt.date, str]:
@@ -31,11 +39,13 @@ def list_short_reports(include_archives: bool = False) -> dict[dt.date, str]:
             i += 1
         else:
             break
-        r = requests.get(url, headers=UA, timeout=60)
-        if r.status_code == 404:
-            break
-        r.raise_for_status()
-        for path, ymd in re.findall(r'href="([^"]*?(\d{8})_Short_Positions\.xls)"', r.text):
+        try:
+            html = _get(url).decode("utf-8", "ignore")
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                break  # アーカイブの最後のページを過ぎた
+            raise
+        for path, ymd in re.findall(r'href="([^"]*?(\d{8})_Short_Positions\.xls)"', html):
             out[dt.datetime.strptime(ymd, "%Y%m%d").date()] = JPX_BASE + path
     return out
 

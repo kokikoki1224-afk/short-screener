@@ -84,9 +84,9 @@ def main(argv=None):
     store.upsert("short_total_history", pd.DataFrame({
         "date": str(today), "code": tot.index, "short_pct": tot["short_pct"].values}))
     store.upsert("margin", margin)
-    keep = px[px["date"] >= px["date"].max() - dt.timedelta(days=C.PRICE_RETENTION_DAYS)]
-    store.upsert("daily_price", keep.drop(columns=["split", "turnover"]))
-    store.upsert("scores", sc.assign(date=str(today)))
+    latest = px[px["date"] == px["date"].max()]                      # 株価は毎回取り直すので最新日だけ保存
+    store.upsert("daily_price", latest.drop(columns=["split", "turnover"]))
+    store.upsert("scores", sc.assign(date=str(today))[C.SCORE_SHEET_COLS])
     alerts = []
     for r in sc.itertuples():
         for t, f in (("買い戻し開始", r.flag_buyback_start), ("買い戻し転換", r.flag_buyback_turn),
