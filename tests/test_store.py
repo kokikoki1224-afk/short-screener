@@ -7,9 +7,18 @@ from src import store as ST
 class FakeWS:
     """gspread.Worksheet のうち SheetsStore が使う部分だけの偽物。rows[0] が見出し行。"""
 
+    id = 1
+
     def __init__(self, rows=None):
         self.rows = [list(r) for r in (rows or [])]
         self.calls = []
+        self.spreadsheet = self  # batch_update を自分で受ける
+
+    def batch_update(self, body):
+        self.calls.append(("batch", len(body["requests"])))
+        for rq in body["requests"]:  # 呼び出し側が下から消す順に並べている
+            r = rq["deleteDimension"]["range"]
+            del self.rows[r["startIndex"]:r["endIndex"]]
 
     def row_values(self, i):
         return [str(x) for x in self.rows[i - 1]] if len(self.rows) >= i else []
@@ -106,3 +115,16 @@ def test_local_store_prunes(tmp_path, monkeypatch):
 
 def test_ranges():
     assert ST._ranges([5, 3, 4, 9]) == [(3, 5), (9, 9)]
+
+
+def test_many_scattered_deletes_use_one_api_call(monkeypatch):
+    """古い行が飛び飛びに散らばっていても、削除のAPI呼び出しは1回(毎分の書き込み上限対策)。"""
+    monkeypatch.setitem(C.RETENTION_DAYS, "scores", 2)  # 10-01 の行が期限切れになる
+    rows = [["date", "code", "score"]]
+    for i in range(300):  # 日付が古い行と新しい行が交互に並ぶ
+        rows.append(["2026-10-01" if i % 2 == 0 else "2026-11-10", f"{2000 + i}", i])
+    ws = FakeWS(rows)
+    sheets(ws).upsert("scores", day("2026-11-11", 2))
+    assert [c for c in ws.calls if c[0] == "batch"] == [("batch", 150)]
+    assert not any(c[0] == "delete" for c in ws.calls)
+    assert len(ws.rows) == 1 + 150 + 2

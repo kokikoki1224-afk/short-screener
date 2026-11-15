@@ -55,16 +55,17 @@ jobs:
           path: out/
           if-no-files-found: ignore
       - id: chk
+        if: always()
         run: |
           if [ -f out/site/index.html ]; then echo "has_site=true" >> "$GITHUB_OUTPUT"; else echo "has_site=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/upload-pages-artifact@v3
-        if: steps.chk.outputs.has_site == 'true'
+        if: always() && steps.chk.outputs.has_site == 'true'
         with:
           path: out/site
 
   deploy:
     needs: run
-    if: needs.run.outputs.has_site == 'true'
+    if: always() && needs.run.outputs.has_site == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

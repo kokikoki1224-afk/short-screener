@@ -5,6 +5,7 @@
 import datetime as dt
 import json
 import os
+import time
 
 import numpy as np
 import pandas as pd
@@ -88,6 +89,20 @@ def _cell(x):
     return str(x)
 
 
+def _retry(fn, *args, **kw):
+    """Sheets APIの毎分の上限(429)に当たったら、待ってやり直す。"""
+    from gspread.exceptions import APIError
+    for i in range(6):
+        try:
+            return fn(*args, **kw)
+        except APIError as e:
+            if "429" not in str(e) or i == 5:
+                raise
+            wait = 20 * (i + 1)
+            print(f"Sheets API 429: {wait}秒待って再試行 ({i + 1}/5)")
+            time.sleep(wait)
+
+
 def _rows(df: pd.DataFrame) -> list:
     return [[_cell(x) for x in r] for r in df.astype(object).values.tolist()]
 
@@ -119,15 +134,19 @@ class SheetsStore:
                 "GOOGLE_SERVICE_ACCOUNT_JSON がサービスアカウント鍵のJSON全文ではありません "
                 f"(文字数={len(creds_json)}, 先頭={creds_json[:1]!r})。鍵ファイルの全文を貼り直してください。")
         self.book = gspread.service_account_from_dict(info).open_by_key(sheet_id)
+        self._cache = {}
 
     def _ws(self, table):
-        try:
-            return self.book.worksheet(table)
-        except Exception:
-            return self.book.add_worksheet(table, rows=1000, cols=30)
+        """シートの取得はAPIを1回使うので、使い回す。"""
+        if table not in self._cache:
+            try:
+                self._cache[table] = _retry(self.book.worksheet, table)
+            except Exception:
+                self._cache[table] = _retry(self.book.add_worksheet, table, rows=1000, cols=30)
+        return self._cache[table]
 
     def read(self, table: str) -> pd.DataFrame:
-        vals = self._ws(table).get_all_values()
+        vals = _retry(self._ws(table).get_all_values)
         if len(vals) < 2:
             return pd.DataFrame()
         df = pd.DataFrame(vals[1:], columns=vals[0])
@@ -141,7 +160,7 @@ class SheetsStore:
             return
         ws = self._ws(table)
         new = _norm(df, table).drop_duplicates(KEYS[table], keep="last")
-        header = ws.row_values(1)
+        header = _retry(ws.row_values, 1)
         if table in DATE_COL and header == list(new.columns):
             self._append_prune(ws, table, new)
         else:  # 日付なしテーブル / 初回 / 列構成が変わった(移行)ときは全件を作り直す
@@ -149,8 +168,8 @@ class SheetsStore:
 
     def _append_prune(self, ws, table: str, new: pd.DataFrame):
         keys, dcol = KEYS[table], DATE_COL[table]
-        header = ws.row_values(1)
-        col = {c: [str(v) for v in ws.col_values(header.index(c) + 1)[1:]] for c in set(keys + [dcol])}
+        header = _retry(ws.row_values, 1)
+        col = {c: [str(v) for v in _retry(ws.col_values, header.index(c) + 1)[1:]] for c in set(keys + [dcol])}
         n = len(col[keys[0]])
         keep = keep_dates(set(col[dcol]) | set(new[dcol].astype(str).str.slice(0, 10)), table)
         new = new[new[dcol].astype(str).str.slice(0, 10).isin(keep)]
@@ -161,20 +180,29 @@ class SheetsStore:
             k = tuple(col[c][i][:10] if "date" in c else col[c][i] for c in keys)
             if k in newkeys or col[dcol][i][:10] not in keep:
                 drop.append(i + 2)  # シート上の行番号(1行目は見出し)
-        for a, b in reversed(_ranges(drop)):  # 下から消す(行番号がずれない)
-            ws.delete_rows(a, b)
+        self._delete_rows(ws, drop)
         for i in range(0, len(new), CHUNK):
-            ws.append_rows(_rows(new.iloc[i:i + CHUNK]), value_input_option="RAW", insert_data_option="INSERT_ROWS")
+            _retry(ws.append_rows, _rows(new.iloc[i:i + CHUNK]), value_input_option="RAW",
+                   insert_data_option="INSERT_ROWS")
         print(f"{table}: +{len(new)}行 / 削除 {len(drop)}行")
+
+    def _delete_rows(self, ws, rows: list):
+        """行の削除は、範囲ごとに1回ずつ送ると毎分の書き込み上限に当たる。1回のbatch_updateにまとめる。"""
+        reqs = [{"deleteDimension": {"range": {"sheetId": ws.id, "dimension": "ROWS",
+                                               "startIndex": a - 1, "endIndex": b}}}
+                for a, b in reversed(_ranges(rows))]  # 下から消す(行番号がずれない)
+        for i in range(0, len(reqs), 500):
+            _retry(ws.spreadsheet.batch_update, {"requests": reqs[i:i + 500]})
 
     def _rebuild(self, ws, table: str, new: pd.DataFrame):
         merged = prune(merge(self.read(table), new, table), table)
         merged = merged.reindex(columns=list(new.columns))  # 旧い列構成の行は新しい列に揃える(余った列は捨てる)
-        ws.clear()
-        ws.resize(rows=len(merged) + 1, cols=max(len(merged.columns), 1))
-        ws.update(values=[list(merged.columns)], range_name="A1", value_input_option="RAW")
+        _retry(ws.clear)
+        _retry(ws.resize, rows=len(merged) + 1, cols=max(len(merged.columns), 1))
+        _retry(ws.update, values=[list(merged.columns)], range_name="A1", value_input_option="RAW")
         for i in range(0, len(merged), CHUNK):
-            ws.update(values=_rows(merged.iloc[i:i + CHUNK]), range_name=f"A{i + 2}", value_input_option="RAW")
+            _retry(ws.update, values=_rows(merged.iloc[i:i + CHUNK]), range_name=f"A{i + 2}",
+                   value_input_option="RAW")
         print(f"{table}: 作り直し {len(merged)}行")
 
 

@@ -36,46 +36,8 @@ def carry_forward_margin(store, fresh: pd.DataFrame, today: dt.date) -> pd.DataF
     return pd.concat([fresh, last[fresh.columns]], ignore_index=True)
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--date", help="公表日(既定: 今日JST)")
-    ap.add_argument("--no-notify", action="store_true")
-    a = ap.parse_args(argv)
-    today = dt.date.fromisoformat(a.date) if a.date else dt.datetime.now(JST).date()
-
-    if not is_business_day(today):                                   # 1. 営業日判定
-        print(f"{today} は休場日。終了。")
-        return 0
-    store = get_store()
-
-    shorts = jpx.fetch_short_positions(today, fallback=not a.date)                        # 2. JPX空売り
-    today = shorts["disclosed"].iloc[0]  # 以降の保存・出力は実際に使った公表日で揃える
-    print(f"short: {len(shorts)} rows / {shorts['code'].nunique()} stocks")
-    positions = store.read("positions")                              # 機関別の最新ポジション(合計の元)
-    if positions.empty:
-        print("positions が未作成。過去ファイルから作成します(初回のみ・数分)")
-        positions = backfill.run(store)
-    pos_now = P.apply_reports(positions, shorts)                     # 当日の報告を反映(再実行しても同じ結果)
-    tot = P.totals(pos_now)
-    codes = sorted(set(tot.index) | set(shorts["code"]))             # 合計>0の全銘柄(当日未報告の銘柄も含む)
-    px = prices.fetch_prices(codes)                                  # 3. 株価・出来高
-    print(f"prices: {px['code'].nunique()} stocks")
-    margin = pd.concat([jpx.fetch_weekly_margin(), jpx.fetch_daily_margin()])  # 4. 信用残
-    margin["date"] = margin["date"].astype(str)
-    margin = margin.sort_values("date").groupby("code").tail(1)      # 日次があれば日次を優先
-    margin = carry_forward_margin(store, margin[margin["code"].isin(codes)], today)
-
-    sc = scoring.build_scores(shorts, px, margin, load_exclusions(), positions=positions)  # 6. スコア
-    sc = scoring.add_history_changes(sc, store.read("short_total_history"), today)      # 5. 1/3/5/20/60日比
-    rk = report.rankings(sc)                                         # 7. ランキング
-
-    md = report.to_markdown(today, rk, sc)
-    C.OUT_DIR.mkdir(exist_ok=True)
-    (C.OUT_DIR / f"report_{today}.md").write_text(md, encoding="utf-8")
-    dashboard.build(today, sc, rk, C.OUT_DIR / "site" / "index.html")
-    sc.to_csv(C.OUT_DIR / f"scores_{today}.csv", index=False, encoding="utf-8-sig")
-
-    # 8. 保存
+def save(store, shorts, pos_now, tot, margin, px, sc, today):
+    """シートへ保存。"""
     store.upsert("stocks", shorts.groupby("code").agg(
         name=("name", "first"), shares_out=("shares_out", "median")).reset_index())
     store.upsert("institutional_short", shorts[
@@ -99,7 +61,59 @@ def main(argv=None):
                            "comment": r.exclude_reason})
     store.upsert("alerts", pd.DataFrame(alerts))
 
-    if not a.no_notify:                                              # 9. 通知
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--date", help="公表日(既定: 今日JST)")
+    ap.add_argument("--no-notify", action="store_true")
+    a = ap.parse_args(argv)
+    today = dt.date.fromisoformat(a.date) if a.date else dt.datetime.now(JST).date()
+
+    # 1. 営業日判定。日付指定なしの定期実行はGitHub側で大きく遅れて深夜(JSTで翌日)に動くことがあるので、
+    #    休場日でも止めず、最新の公表分で動かす(同じ日の再処理は何度やっても結果が変わらない)。
+    if a.date and not is_business_day(today):
+        print(f"{today} は休場日。終了。")
+        return 0
+    store = get_store()
+
+    shorts = jpx.fetch_short_positions(today, fallback=not a.date)                        # 2. JPX空売り
+    today = shorts["disclosed"].iloc[0]  # 以降の保存・出力は実際に使った公表日で揃える
+    print(f"short: {len(shorts)} rows / {shorts['code'].nunique()} stocks")
+    positions = store.read("positions")                              # 機関別の最新ポジション(合計の元)
+    if positions.empty:
+        print("positions が未作成。過去ファイルから作成します(初回のみ・数分)")
+        positions = backfill.run(store)
+    pos_now = P.apply_reports(positions, shorts)                     # 当日の報告を反映(再実行しても同じ結果)
+    tot = P.totals(pos_now)
+    codes = sorted(set(tot.index) | set(shorts["code"]))             # 合計>0の全銘柄(当日未報告の銘柄も含む)
+    px = prices.fetch_prices(codes)                                  # 3. 株価・出来高
+    print(f"prices: {px['code'].nunique()} stocks")
+    margin = pd.concat([jpx.fetch_weekly_margin(), jpx.fetch_daily_margin()])  # 4. 信用残
+    margin["date"] = margin["date"].astype(str)
+    margin = margin.sort_values("date").groupby("code").tail(1)      # 日次があれば日次を優先
+    margin = carry_forward_margin(store, margin[margin["code"].isin(codes)], today)
+
+    sc = scoring.build_scores(shorts, px, margin, load_exclusions(), positions=positions)  # 6. スコア
+    total_hist = store.read("short_total_history")
+    first_time = total_hist.empty or str(today) not in set(total_hist["date"].astype(str).str.slice(0, 10))
+    sc = scoring.add_history_changes(sc, total_hist, today)          # 5. 1/3/5/20/60日比
+    rk = report.rankings(sc)                                         # 7. ランキング
+
+    md = report.to_markdown(today, rk, sc)
+    C.OUT_DIR.mkdir(exist_ok=True)
+    (C.OUT_DIR / f"report_{today}.md").write_text(md, encoding="utf-8")
+    dashboard.build(today, sc, rk, C.OUT_DIR / "site" / "index.html")
+    sc.to_csv(C.OUT_DIR / f"scores_{today}.csv", index=False, encoding="utf-8-sig")
+
+    # 8. 保存。シートの不調でダッシュボード(上で作成済み)の公開まで止めないよう、失敗は最後に報告する
+    try:
+        save(store, shorts, pos_now, tot, margin, px, sc, today)
+    except Exception as e:
+        print(f"ERROR: シートへの保存に失敗: {e!r}")
+        if not a.no_notify and first_time:
+            report.notify(today, rk)
+        return 1
+    if not a.no_notify and first_time:                               # 9. 通知(同じデータ日は1回だけ)
         report.notify(today, rk)
     print(f"done. sell={len(rk['sell'])} buyback={len(rk['buyback'])} squeeze={len(rk['squeeze'])}")
     return 0
